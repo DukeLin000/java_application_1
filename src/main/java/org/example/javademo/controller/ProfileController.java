@@ -17,14 +17,6 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/profile")
 @Validated
-@CrossOrigin( // 開發期保險用；之後可移除改用全域 CORS
-        origins = "*",
-        allowedHeaders = {"*"},
-        exposedHeaders = {"Location"},
-        methods = { RequestMethod.GET, RequestMethod.POST, RequestMethod.OPTIONS },
-        allowCredentials = "false",
-        maxAge = 3600
-)
 public class ProfileController {
 
     private final ProfileService profileService;
