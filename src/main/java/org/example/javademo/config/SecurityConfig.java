@@ -4,10 +4,11 @@ import org.example.javademo.security.JwtAuthenticationFilter;
 import org.springframework.boot.autoconfigure.security.servlet.PathRequest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
-import org.springframework.security.config.annotation.web.configuration.WebSecurityCustomizer;  // ✅
+import org.springframework.security.config.annotation.web.configuration.WebSecurityCustomizer;  // ✅ 正確的 import
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
@@ -25,7 +26,7 @@ public class SecurityConfig {
         this.jwtFilter = jwtFilter;
     }
 
-    // ✅ 直接讓 Security 完全忽略 H2 Console（最佳解）
+    // H2 Console 直接忽略（繞過整條 Security 鏈）
     @Bean
     public WebSecurityCustomizer webSecurityCustomizer() {
         return web -> web.ignoring().requestMatchers(PathRequest.toH2Console());
@@ -34,9 +35,8 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
-                // H2 Console 需要關閉/忽略 CSRF（這裡保險：忽略 h2-console）
                 .csrf(csrf -> csrf.ignoringRequestMatchers("/h2-console/**"))
-                .cors(cors -> {}) // 使用 WebConfig 的全域 CORS
+                .cors(cors -> {})
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(
@@ -46,12 +46,20 @@ public class SecurityConfig {
                                 "/v3/api-docs/**",
                                 "/swagger-ui.html",
                                 "/actuator/health",
-                                "/h2-console/**"        // ✅ 放行 H2 Console
+                                "/h2-console/**"
                         ).permitAll()
+
+                        // ✅ 圖片公開讀取
+                        .requestMatchers(HttpMethod.GET, "/files/**").permitAll()
+
+                        // ✅ 上傳仍需登入（其實 anyRequest 已會擋，明列更清楚）
+                        .requestMatchers("/api/files/**").authenticated()
+
+                        // 其他路由預設需認證
                         .anyRequest().authenticated()
                 )
                 .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class)
-                // ✅ H2 Console 需要可被 frame（預設 DENY 會 403/被瀏覽器擋）
+                // H2 Console 需要 frame
                 .headers(h -> h.frameOptions(f -> f.sameOrigin()));
 
         return http.build();
