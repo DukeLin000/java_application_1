@@ -1,39 +1,60 @@
 package org.example.javademo.config;
 
+import org.example.javademo.security.JwtAuthenticationFilter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.security.config.Customizer;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
 @Configuration
+@EnableMethodSecurity // 之後可用 @PreAuthorize
 public class SecurityConfig {
 
+    private final JwtAuthenticationFilter jwtFilter;
+
+    public SecurityConfig(JwtAuthenticationFilter jwtFilter) {
+        this.jwtFilter = jwtFilter;
+    }
+
     @Bean
-    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
-                // 開發期：關 CSRF；未來用表單/Cookie 再開
                 .csrf(csrf -> csrf.disable())
-
-                // 關鍵：啟用 CORS（實際規則由 WebConfig#addCorsMappings 提供）
-                .cors(Customizer.withDefaults())
-
-                // 無狀態（搭配 Bearer/JWT 比方便；沒有也不影響）
+                .cors(cors -> {}) // 使用你的 WebConfig 全域 CORS
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-
-                // 路由授權（開發期全部放行；上線再收斂）
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(
-                                "/api/**",          // 你的 API
-                                "/actuator/health", // 若有加 actuator
-                                "/health"
+                                "/api/auth/**",
+                                "/api/health",
+                                "/swagger-ui/**",
+                                "/v3/api-docs/**",
+                                "/swagger-ui.html"      // 有些環境會走這個
                         ).permitAll()
-                        .anyRequest().permitAll()
-                );
+                        // 若你有啟用 Actuator 健康檢查，也一起放行：
+                        .requestMatchers("/actuator/health").permitAll()
+                        .anyRequest().authenticated()
+                )
+                // 在 UsernamePasswordAuthenticationFilter 之前掛上你的 JWT 檢查
+                .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
     }
 
-    // ⚠️ 不要在這裡宣告 CorsConfigurationSource Bean，避免覆蓋你既有的 WebConfig CORS 規則。
+    @Bean
+    public PasswordEncoder passwordEncoder() {
+        return new BCryptPasswordEncoder(); // BCrypt 密碼雜湊
+    }
+
+    // 若之後需要 AuthenticationManager 可注入使用
+    @Bean
+    public AuthenticationManager authenticationManager(AuthenticationConfiguration cfg) throws Exception {
+        return cfg.getAuthenticationManager();
+    }
 }

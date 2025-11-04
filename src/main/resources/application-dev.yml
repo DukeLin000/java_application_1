@@ -1,4 +1,4 @@
-logging:
-  level:
-    root: INFO
-    org.example.javademo: DEBUG
+# 需要針對 dev 覆寫再寫，沒有就省略
+# 例如開發期把 access token 時效縮短方便測
+jwt:
+  expMinutes: 30
