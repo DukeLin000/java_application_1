@@ -2,12 +2,11 @@ package org.example.javademo.controller;
 
 import org.example.javademo.dto.UserProfileDto;
 import org.example.javademo.service.ProfileService;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.server.ResponseStatusException;
 
 import jakarta.validation.Valid;
 import java.net.URI;
@@ -25,7 +24,7 @@ public class ProfileController {
         this.profileService = profileService;
     }
 
-    /** 防呆：有人打 GET /api/profile 就回可用端點，避免 500 */
+    /** GET /api/profile → 提示可用端點（防呆） */
     @GetMapping(produces = MediaType.APPLICATION_JSON_VALUE)
     public Map<String, Object> index() {
         return Map.of(
@@ -33,40 +32,44 @@ public class ProfileController {
                 "endpoints", List.of(
                         "GET  /api/profile/ping",
                         "POST /api/profile",
-                        "GET  /api/profile/{id}"
+                        "GET  /api/profile/{id}",
+                        "GET  /api/profile/me"
                 )
         );
     }
 
-    /** 健康檢查（前端 preflight/ping 會打這裡） */
+    /** 健康檢查 */
     @GetMapping(value = "/ping", produces = MediaType.APPLICATION_JSON_VALUE)
     public Map<String, Object> ping() {
         return Map.of("ok", true, "ts", System.currentTimeMillis());
     }
 
-    /** 建立/儲存使用者量身資料（回 201 並含 Location） */
+    /** 建立/更新目前登入者的 Profile，回 201 並帶 Location */
     @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
-    public ResponseEntity<Map<String, Object>> save(@Valid @RequestBody UserProfileDto req) {
-        Map<String, Object> body = profileService.save(req);
-        String id = String.valueOf(body.get("id")); // 例如 P-1
-        return ResponseEntity
-                .created(URI.create("/api/profile/" + id))
+    public ResponseEntity<Map<String, Object>> save(@Valid @RequestBody UserProfileDto req,
+                                                    Authentication auth) {
+        String email = (auth != null) ? (String) auth.getPrincipal() : null; // JwtAuthenticationFilter 設的 principal=Email
+        var body = profileService.saveForUser(email, req);
+        String id = String.valueOf(body.get("id"));
+        return ResponseEntity.created(URI.create("/api/profile/" + id))
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(body);
     }
 
-    /** 回讀：支援 /api/profile/P-1 或 /api/profile/1 */
+    /** 回讀：/api/profile/{id} */
     @GetMapping(value = "/{id}", produces = MediaType.APPLICATION_JSON_VALUE)
-    public UserProfileDto get(@PathVariable String id) {
-        final long key;
-        try {
-            key = id.startsWith("P-") ? Long.parseLong(id.substring(2)) : Long.parseLong(id);
-        } catch (NumberFormatException e) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid id format: " + id);
-        }
-        return profileService.get(key)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Profile not found: " + id));
+    public ResponseEntity<UserProfileDto> get(@PathVariable Long id) {
+        return profileService.get(id)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
     }
 
-    // ⚠️ 不要自訂 OPTIONS；交給 Spring 的 CORS Filter 處理即可
+    /** 回讀目前登入者的 Profile（方便前端） */
+    @GetMapping(value = "/me", produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<UserProfileDto> me(Authentication auth) {
+        String email = (auth != null) ? (String) auth.getPrincipal() : null;
+        return profileService.getByUserEmail(email)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.noContent().build());
+    }
 }

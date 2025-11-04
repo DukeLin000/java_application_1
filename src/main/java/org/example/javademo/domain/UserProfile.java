@@ -1,44 +1,53 @@
-package org.example.javademo.dto;
+package org.example.javademo.domain;
 
-import jakarta.validation.constraints.*;
+import jakarta.persistence.*;
 import java.util.List;
 import java.util.Map;
 
-public class UserProfileDto {
+@Entity
+@Table(name = "user_profiles")
+public class UserProfile {
 
-    private Long id;  // 回讀時用
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
 
-    @NotNull @Min(50) @Max(260)
-    private Integer height;           // cm
+    @OneToOne(optional = false)
+    @JoinColumn(name = "user_id", nullable = false, unique = true)
+    private User user;
 
-    @NotNull @Min(20) @Max(300)
-    private Integer weight;           // kg
+    private Integer height;          // cm
+    private Integer weight;          // kg
+    private Integer shoulderWidth;   // cm
+    private Integer waistline;       // cm
+    private String  fitPreference;   // slim | regular | loose
 
-    @Min(20) @Max(100)
-    private Integer shoulderWidth;    // cm
+    @ElementCollection
+    @CollectionTable(name = "user_color_blacklist",
+            joinColumns = @JoinColumn(name = "profile_id"))
+    @Column(name = "color")
+    private List<String> colorBlacklist;
 
-    @Min(30) @Max(200)
-    private Integer waistline;        // cm
+    @Column(name = "has_motorcycle")
+    private Boolean hasMotorcycle;   // 可為 null，未填
 
-    @NotBlank
-    private String fitPreference;     // slim | regular | loose
+    private String commuteMethod;    // walk | bike | motorcycle | car | public
 
-    @NotNull
-    private List<@NotBlank String> colorBlacklist;
+    @ElementCollection
+    @CollectionTable(name = "user_style_weights",
+            joinColumns = @JoinColumn(name = "profile_id"))
+    @MapKeyColumn(name = "style_key")
+    @Column(name = "weight_val")
+    private Map<String, Integer> styleWeights;
 
-    private Boolean hasMotorcycle;    // 可為 null 表示未填
+    public UserProfile() {}
 
-    @NotBlank
-    private String commuteMethod;     // walk | bike | motorcycle | car | public
-
-    @NotNull
-    private Map<@NotBlank String, @Min(0) @Max(100) Integer> styleWeights;
-
-    public UserProfileDto() {}
-
-    // getters & setters
+    // --- getters & setters ---
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
+
+    public User getUser() { return user; }
+    public void setUser(User user) { this.user = user; }
 
     public Integer getHeight() { return height; }
     public void setHeight(Integer height) { this.height = height; }
