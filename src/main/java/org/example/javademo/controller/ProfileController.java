@@ -2,11 +2,13 @@ package org.example.javademo.controller;
 
 import org.example.javademo.dto.UserProfileDto;
 import org.example.javademo.service.ProfileService;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 
 import jakarta.validation.Valid;
 import java.net.URI;
@@ -33,7 +35,8 @@ public class ProfileController {
                         "GET  /api/profile/ping",
                         "POST /api/profile",
                         "GET  /api/profile/{id}",
-                        "GET  /api/profile/me"
+                        "GET  /api/profile/me",
+                        "PUT  /api/profile/{id}"
                 )
         );
     }
@@ -44,11 +47,11 @@ public class ProfileController {
         return Map.of("ok", true, "ts", System.currentTimeMillis());
     }
 
-    /** 建立/更新目前登入者的 Profile，回 201 並帶 Location */
+    /** 建立/更新目前登入者的 Profile（upsert），回 201 並帶 Location */
     @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<Map<String, Object>> save(@Valid @RequestBody UserProfileDto req,
                                                     Authentication auth) {
-        String email = (auth != null) ? (String) auth.getPrincipal() : null; // JwtAuthenticationFilter 設的 principal=Email
+        String email = (auth != null) ? (String) auth.getPrincipal() : null; // JwtAuthenticationFilter 設為 Email
         var body = profileService.saveForUser(email, req);
         String id = String.valueOf(body.get("id"));
         return ResponseEntity.created(URI.create("/api/profile/" + id))
@@ -56,20 +59,28 @@ public class ProfileController {
                 .body(body);
     }
 
-    /** 回讀：/api/profile/{id} */
+    /** 回讀指定 id，但必須是「本人」的 Profile（避免越權） */
     @GetMapping(value = "/{id}", produces = MediaType.APPLICATION_JSON_VALUE)
-    public ResponseEntity<UserProfileDto> get(@PathVariable Long id) {
-        return profileService.get(id)
-                .map(ResponseEntity::ok)
-                .orElse(ResponseEntity.notFound().build());
+    public UserProfileDto get(@PathVariable Long id, Authentication auth) {
+        String email = (auth != null) ? (String) auth.getPrincipal() : null;
+        return profileService.getByIdForOwner(email, id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Profile not found"));
     }
 
-    /** 回讀目前登入者的 Profile（方便前端） */
+    /** 回讀目前登入者的 Profile（不存在則 404，走全域錯誤格式） */
     @GetMapping(value = "/me", produces = MediaType.APPLICATION_JSON_VALUE)
-    public ResponseEntity<UserProfileDto> me(Authentication auth) {
+    public UserProfileDto me(Authentication auth) {
         String email = (auth != null) ? (String) auth.getPrincipal() : null;
-        return profileService.getByUserEmail(email)
-                .map(ResponseEntity::ok)
-                .orElse(ResponseEntity.noContent().build());
+        return profileService.getMine(email)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Profile not found"));
+    }
+
+    /** 更新指定 id（僅本人；部分更新：只覆蓋非 null 欄位） */
+    @PutMapping(value = "/{id}", consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
+    public UserProfileDto update(@PathVariable Long id,
+                                 @Valid @RequestBody UserProfileDto req,
+                                 Authentication auth) {
+        String email = (auth != null) ? (String) auth.getPrincipal() : null;
+        return profileService.update(email, id, req);
     }
 }
