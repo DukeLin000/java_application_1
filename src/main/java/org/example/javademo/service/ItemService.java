@@ -5,6 +5,8 @@ import org.example.javademo.domain.User;
 import org.example.javademo.dto.ItemDto;
 import org.example.javademo.repository.ItemRepository;
 import org.example.javademo.repository.UserRepository;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
@@ -23,13 +25,13 @@ public class ItemService {
         this.users = users;
     }
 
-    // =========================
-    // 相容：維持你原本簽名（單人/未綁帳號）
-    // =========================
+    // =====================================================================
+    // 相容：維持你原本簽名（單人 / 未綁帳號），方便舊前端或測試先走得通
+    // =====================================================================
+
     public ItemDto create(ItemDto req) {
         Item e = new Item();
         apply(e, req);
-        // 相容階段：不綁 user
         Item saved = items.save(e);
         return toDto(saved);
     }
@@ -57,9 +59,10 @@ public class ItemService {
         return Map.of("deleted", exists, "id", id);
     }
 
-    // =================================
-    // === 建議：多使用者版（帶 email） ===
-    // =================================
+    // =========================================================
+    // 建議：正式使用（多使用者版，email 綁定本人資料的 CRUD）
+    // =========================================================
+
     public ItemDto create(String email, ItemDto req) {
         Item e = new Item();
         e.setUser(mustUser(email));
@@ -67,9 +70,33 @@ public class ItemService {
         return toDto(items.save(e));
     }
 
+    /** 簡版本人列表（不分頁，保留相容） */
     public List<ItemDto> list(String email) {
         User u = mustUser(email);
         return items.findByUser_Id(u.getId()).stream().map(this::toDto).toList();
+    }
+
+    /** 分頁 + 排序 + 篩選（category、brand）— 推薦前端走這支 */
+    public Page<ItemDto> list(String email, String category, String brand, Pageable pageable) {
+        User u = mustUser(email);
+
+        boolean hasCat   = category != null && !category.isBlank();
+        boolean hasBrand = brand != null && !brand.isBlank();
+
+        Page<Item> page;
+        if (hasCat && hasBrand) {
+            page = items.findByUser_IdAndCategoryIgnoreCaseAndBrandIgnoreCase(
+                    u.getId(), category, brand, pageable);
+        } else if (hasCat) {
+            page = items.findByUser_IdAndCategoryIgnoreCase(
+                    u.getId(), category, pageable);
+        } else if (hasBrand) {
+            page = items.findByUser_IdAndBrandIgnoreCase(
+                    u.getId(), brand, pageable);
+        } else {
+            page = items.findByUser_Id(u.getId(), pageable);
+        }
+        return page.map(this::toDto);
     }
 
     public ItemDto get(String email, long id) {
@@ -92,15 +119,15 @@ public class ItemService {
         return items.findByIdAndUser_Id(id, u.getId())
                 .map(it -> {
                     items.delete(it);
-                    return Map.<String,Object>of("deleted", Boolean.TRUE, "id", id);
+                    return Map.<String, Object>of("deleted", Boolean.TRUE, "id", id);
                 })
-                .orElseGet(() -> Map.<String,Object>of("deleted", Boolean.FALSE, "id", id));
+                .orElseGet(() -> Map.<String, Object>of("deleted", Boolean.FALSE, "id", id));
     }
-
 
     // =========================
     // helpers
     // =========================
+
     private User mustUser(String email) {
         if (email == null || email.isBlank()) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "No principal");
@@ -109,13 +136,13 @@ public class ItemService {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "User not found"));
     }
 
+    /** 只套用非 null 欄位；createdAt/updatedAt 交由 @PrePersist/@PreUpdate */
     private void apply(Item e, ItemDto r) {
         if (r.name != null)     e.setName(r.name);
         if (r.category != null) e.setCategory(r.category);
         if (r.color != null)    e.setColor(r.color);
         if (r.size != null)     e.setSize(r.size);
         if (r.brand != null)    e.setBrand(r.brand);
-        // createdAt/updatedAt 由 @PrePersist/@PreUpdate 處理
     }
 
     private ItemDto toDto(Item e) {
