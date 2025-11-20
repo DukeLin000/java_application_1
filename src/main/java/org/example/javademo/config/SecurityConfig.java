@@ -46,7 +46,8 @@ public class SecurityConfig {
                                 "/v3/api-docs/**",
                                 "/swagger-ui.html",
                                 "/actuator/health",
-                                "/h2-console/**"
+                                "/h2-console/**",
+                                "/api/profile/ping"
                         ).permitAll()
 
                         // ✅ 圖片公開讀取
