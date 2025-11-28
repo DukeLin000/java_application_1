@@ -1,6 +1,7 @@
 package org.example.javademo.service;
 
 import org.example.javademo.domain.ClothingItem;
+import org.example.javademo.domain.Comment; // ✅ 新增：引用 Comment
 import org.example.javademo.domain.Outfit;
 import org.example.javademo.domain.User;
 import org.example.javademo.dto.OutfitDto;
@@ -24,7 +25,6 @@ public class OutfitService {
     private final ClothingItemRepository clothingItemRepository;
     private final UserRepository userRepository;
 
-    // 建構子注入 Repository
     public OutfitService(OutfitRepository outfitRepository,
                          ClothingItemRepository clothingItemRepository,
                          UserRepository userRepository) {
@@ -33,17 +33,15 @@ public class OutfitService {
         this.userRepository = userRepository;
     }
 
-    // 建立穿搭 (需綁定 User)
+    // 1. 建立穿搭
     public OutfitDto create(String email, OutfitDto req) {
         User user = mustUser(email);
 
         Outfit outfit = new Outfit();
         outfit.setUser(user);
-        outfit.setName(req.notes); // 暫時將筆記存為名稱，視需求調整
+        outfit.setName(req.notes);
 
-        // 解析傳入的 ID 並從資料庫撈取 ClothingItem 實體
         List<ClothingItem> items = new ArrayList<>();
-
         if (req.topId != null) items.add(mustGetItem(req.topId, user.getId()));
         if (req.bottomId != null) items.add(mustGetItem(req.bottomId, user.getId()));
         if (req.shoesId != null) items.add(mustGetItem(req.shoesId, user.getId()));
@@ -53,35 +51,77 @@ public class OutfitService {
                 items.add(mustGetItem(accId, user.getId()));
             }
         }
-
-        // 注意：這需要你的 Outfit Entity 的 items 欄位是 List<ClothingItem>
-        // 如果目前是 List<Item>，請同步修改 Outfit.java
         outfit.setItems(items);
 
         Outfit saved = outfitRepository.save(outfit);
-        return toDto(saved);
+        return toDto(saved, user); // ✅ 傳入 user 以判斷 isLiked
     }
 
-    // 取得列表 (僅限本人)
+    // 2. 取得列表 (這裡目前設定為列出所有人的穿搭，變成社群牆)
+    //    如果您只想列出自己的，可以改回 findByUser_Id
     public List<OutfitDto> list(String email) {
         User user = mustUser(email);
-        return outfitRepository.findByUser_Id(user.getId())
+        // ✅ 改成 findAll() 讓大家可以看到彼此的穿搭 (社群功能)
+        return outfitRepository.findAll()
                 .stream()
-                .map(this::toDto)
+                .map(entity -> toDto(entity, user))
                 .collect(Collectors.toList());
     }
 
-    // 取得單一穿搭 (需檢查擁有權)
+    // 3. 取得單一穿搭
     public OutfitDto get(String email, long id) {
         User user = mustUser(email);
         Outfit outfit = outfitRepository.findById(id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Outfit not found"));
 
-        if (!outfit.getUser().getId().equals(user.getId())) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Access denied");
-        }
+        // 註解掉這行：社群功能通常允許查看別人的穿搭
+        // if (!outfit.getUser().getId().equals(user.getId())) { ... }
 
-        return toDto(outfit);
+        return toDto(outfit, user);
+    }
+
+    // --- 社群功能實作 ---
+
+    // 4. 按讚
+    public void likeOutfit(String email, long outfitId) {
+        User user = mustUser(email);
+        Outfit outfit = outfitRepository.findById(outfitId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Outfit not found"));
+
+        outfit.addLike(user);
+        outfitRepository.save(outfit);
+    }
+
+    // 5. 取消讚
+    public void unlikeOutfit(String email, long outfitId) {
+        User user = mustUser(email);
+        Outfit outfit = outfitRepository.findById(outfitId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Outfit not found"));
+
+        outfit.removeLike(user);
+        outfitRepository.save(outfit);
+    }
+
+    // 6. 取得留言
+    public List<Comment> getComments(long outfitId) {
+        Outfit outfit = outfitRepository.findById(outfitId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Outfit not found"));
+        return outfit.getComments();
+    }
+
+    // 7. 新增留言
+    public Comment addComment(String email, long outfitId, String content) {
+        User user = mustUser(email);
+        Outfit outfit = outfitRepository.findById(outfitId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Outfit not found"));
+
+        Comment comment = new Comment(user, outfit, content);
+
+        // 因為有設定 CascadeType.ALL，加到 list 後存 outfit 即可
+        outfit.getComments().add(comment);
+        outfitRepository.save(outfit);
+
+        return comment;
     }
 
     // --- Helpers ---
@@ -93,19 +133,37 @@ public class OutfitService {
 
     private ClothingItem mustGetItem(Long itemId, Long userId) {
         return clothingItemRepository.findByIdAndUser_Id(itemId, userId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Item not found or not owned: " + itemId));
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Item not found or not owned"));
     }
 
-    // 將 Entity 轉回 DTO (包含簡單的分類邏輯)
-    private OutfitDto toDto(Outfit entity) {
+    // ✅ 更新後的 toDto：計算按讚數與是否按讚
+    private OutfitDto toDto(Outfit entity, User viewer) {
         OutfitDto dto = new OutfitDto();
         dto.id = entity.getId();
         dto.notes = entity.getName();
-        // dto.createdAt = entity.getCreatedAt(); // 若 Entity 有此欄位
+
+        // ✅ 填入前端需要的社群資料
+        if (entity.getLikedByUsers() != null) {
+            dto.likeCount = entity.getLikedByUsers().size();
+            dto.likedByMe = entity.getLikedByUsers().contains(viewer);
+        } else {
+            dto.likeCount = 0;
+            dto.likedByMe = false;
+        }
+
+        // ✅ 填入留言數 (可選)
+        if (entity.getComments() != null) {
+            // dto.commentCount = entity.getComments().size();
+        }
+
+        // ✅ 填入發布者名稱 (給前端顯示 "User123")
+        if (entity.getUser() != null) {
+            dto.userDisplayName = entity.getUser().getDisplayName();
+        }
 
         dto.accessoryIds = new ArrayList<>();
 
-        // 將 List<ClothingItem> 拆解回 top/bottom/shoes/accessories
+        // 拆解 ClothingItem 到對應欄位
         if (entity.getItems() != null) {
             for (ClothingItem item : entity.getItems()) {
                 switch (item.getCategory()) {
@@ -113,17 +171,10 @@ public class OutfitService {
                     case BOTTOM -> dto.bottomId = item.getId();
                     case SHOES -> dto.shoesId = item.getId();
                     case ACCESSORY -> dto.accessoryIds.add(item.getId());
-                    // 其他類型如 OUTERWEAR 可視需求決定放哪，或 DTO 增加欄位
-                    default -> {
-                        // 預設處理：如果 DTO 沒有對應欄位，暫時放入配件或忽略
-                        if (item.getCategory() == ClothingItem.Category.OUTERWEAR) {
-                            // 視業務邏輯決定，這裡暫不處理或加到 accessory
-                        }
-                    }
+                    default -> {}
                 }
             }
         }
-
         return dto;
     }
 }
