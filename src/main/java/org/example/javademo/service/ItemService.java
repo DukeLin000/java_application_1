@@ -16,7 +16,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -25,7 +24,7 @@ import java.util.stream.Collectors;
 @Transactional
 public class ItemService {
 
-    private final ClothingItemRepository itemRepo; // 改用 ClothingItemRepository
+    private final ClothingItemRepository itemRepo;
     private final UserRepository userRepo;
 
     public ItemService(ClothingItemRepository itemRepo, UserRepository userRepo) {
@@ -56,15 +55,16 @@ public class ItemService {
                 .stream().map(this::toDto).collect(Collectors.toList());
     }
 
-    // 列表查詢 (進階版，支援篩選與分頁)
-    // 若 Repository 尚未支援複雜查詢，可先回傳簡單列表或空 Page
+    // ✅ 修正：列表查詢 (進階版，支援分頁) - 現在會真的去查資料庫了
     public Page<ItemDto> list(String email, String category, String brand, Pageable pageable) {
         User user = mustUser(email);
-        // 目前先回傳簡單查詢的分頁結果 (不含篩選)，待 Repository 補強後再接上篩選
-        // 實務上建議在 ClothingItemRepository 增加類似 findByUser_IdAndCategory... 的方法
-        // 這裡暫時用 findAll (scoped to user) 或是先回傳空以避免編譯錯誤，
-        // 假設 Repository 只有基本 findByUser_Id，我們先手動過濾或暫時略過
-        return Page.empty();
+
+        // 呼叫 Repository 的分頁查詢方法
+        // 注意：請確保 ClothingItemRepository 中已新增 findByUser_Id(Long userId, Pageable pageable)
+        Page<ClothingItem> page = itemRepo.findByUser_Id(user.getId(), pageable);
+
+        // 將查詢結果轉換為 DTO 回傳
+        return page.map(this::toDto);
     }
 
     // 取得單件
@@ -103,7 +103,6 @@ public class ItemService {
 
     @Deprecated
     public ItemDto create(ItemDto req) {
-        // 舊方法無法綁定 User，暫時拋出錯誤或回傳空
         throw new ResponseStatusException(HttpStatus.GONE, "Please use authenticated API");
     }
 
@@ -124,17 +123,15 @@ public class ItemService {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "User not found"));
     }
 
-    // DTO (ItemDto) -> Entity (ClothingItem) 轉換邏輯
+    // DTO -> Entity
     private void applyDtoToEntity(ClothingItem item, ItemDto dto) {
         try {
-            // Category (必填)
             if (dto.category != null) {
                 item.setCategory(Category.valueOf(dto.category.toUpperCase()));
             }
 
-            // SubCategory / Name
             String sub = dto.subCategory;
-            if (sub == null || sub.isEmpty()) sub = dto.name; // 相容舊欄位
+            if (sub == null || sub.isEmpty()) sub = dto.name;
             item.setSubCategory(sub != null ? sub : "");
 
             item.setBrand(dto.brand);
@@ -142,7 +139,6 @@ public class ItemService {
             item.setSize(dto.size);
             item.setImageUrl(dto.imageUrl);
 
-            // Fit
             if (dto.fit != null) {
                 item.setFit(Fit.valueOf(dto.fit.toUpperCase()));
             }
@@ -155,7 +151,6 @@ public class ItemService {
 
             if (dto.tags != null) item.setTags(dto.tags);
 
-            // 處理 List<Enum>
             if (dto.season != null) {
                 item.setSeasons(dto.season.stream()
                         .map(s -> Season.valueOf(s.toUpperCase()))
@@ -173,13 +168,15 @@ public class ItemService {
         }
     }
 
-    // Entity (ClothingItem) -> DTO (ItemDto) 轉換邏輯
+    // Entity -> DTO
     private ItemDto toDto(ClothingItem item) {
         ItemDto dto = new ItemDto();
         dto.id = item.getId();
         dto.category = item.getCategory().name().toLowerCase();
+
+        // ✅ 確保 subCategory 和 name 都有值，前端才能正確顯示
         dto.subCategory = item.getSubCategory();
-        dto.name = item.getSubCategory(); // 回填 name 以相容舊前端
+        dto.name = item.getSubCategory();
 
         dto.brand = item.getBrand();
         dto.color = item.getColor();
